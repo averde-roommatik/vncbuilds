@@ -1,0 +1,190 @@
+name: Build & release TigerVNC viewer for Windows
+
+on:
+  schedule:
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild and re-release even if the tag already exists'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM: https://github.com/TigerVNC/tigervnc.git
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      stable_tag: ${{ steps.v.outputs.stable_tag }}
+      stable_exists: ${{ steps.v.outputs.stable_exists }}
+      rc_tag: ${{ steps.v.outputs.rc_tag }}
+      rc_exists: ${{ steps.v.outputs.rc_exists }}
+    steps:
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -e
+
+          STABLE_TAG=$(git ls-remote --tags --sort=-v:refname "$UPSTREAM" \
+            | awk -F/ '{print $NF}' | grep -v '\^{}' | head -1)
+          MASTER_SHA=$(git ls-remote "$UPSTREAM" refs/heads/master | cut -c1-7)
+          RC_TAG="${STABLE_TAG}-rc.g${MASTER_SHA}"
+
+          echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
+          echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
+
+          if [ "$FORCE" = "true" ]; then
+            echo "stable_exists=false" >> "$GITHUB_OUTPUT"
+            echo "rc_exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if gh release view "$STABLE_TAG" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "stable_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if gh release view "$RC_TAG" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "rc_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rc_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-stable:
+    needs: check
+    if: needs.check.outputs.stable_exists == 'false'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: TigerVNC/tigervnc
+          ref: ${{ needs.check.outputs.stable_tag }}
+      - uses: msys2/setup-msys2@v2
+        with:
+          update: true
+      - name: Install dependencies
+        run: |
+          pacman --sync --noconfirm --needed \
+            make mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake
+          pacman --sync --noconfirm --needed \
+            mingw-w64-x86_64-fltk1.3 mingw-w64-x86_64-libjpeg-turbo \
+            mingw-w64-x86_64-gnutls mingw-w64-x86_64-pixman \
+            mingw-w64-x86_64-nettle mingw-w64-x86_64-gmp
+      - name: Configure
+        run: |
+          cmake -G "MSYS Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_NLS=ON -DENABLE_H264=ON -DENABLE_AUDIO=ON \
+            -DENABLE_GNUTLS=ON -DENABLE_NETTLE=ON -DBUILD_VIEWER=ON \
+            -S . -B build
+      - name: Build
+        working-directory: build
+        run: make
+      - name: Package installer
+        working-directory: build
+        env:
+          MSYS2_PATH_TYPE: inherit
+        run: |
+          make installer
+          cp release/tigervnc*.exe ../vncviewer.exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vncviewer-stable
+          path: vncviewer.exe
+
+  build-rc:
+    needs: check
+    if: needs.check.outputs.rc_exists == 'false'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: TigerVNC/tigervnc
+          ref: master
+      - uses: msys2/setup-msys2@v2
+        with:
+          update: true
+      - name: Install dependencies
+        run: |
+          pacman --sync --noconfirm --needed \
+            make mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake
+          pacman --sync --noconfirm --needed \
+            mingw-w64-x86_64-fltk1.3 mingw-w64-x86_64-libjpeg-turbo \
+            mingw-w64-x86_64-gnutls mingw-w64-x86_64-pixman \
+            mingw-w64-x86_64-nettle mingw-w64-x86_64-gmp
+      - name: Configure
+        run: |
+          cmake -G "MSYS Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_NLS=ON -DENABLE_H264=ON -DENABLE_AUDIO=ON \
+            -DENABLE_GNUTLS=ON -DENABLE_NETTLE=ON -DBUILD_VIEWER=ON \
+            -S . -B build
+      - name: Build
+        working-directory: build
+        run: make
+      - name: Package installer
+        working-directory: build
+        env:
+          MSYS2_PATH_TYPE: inherit
+        run: |
+          make installer
+          cp release/tigervnc*.exe ../vncviewer.exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vncviewer-rc
+          path: vncviewer.exe
+
+  release-stable:
+    needs: [check, build-stable]
+    if: needs.check.outputs.stable_exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: vncviewer-stable
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check.outputs.stable_tag }}
+          name: TigerVNC viewer ${{ needs.check.outputs.stable_tag }} (stable)
+          prerelease: false
+          body: |
+            Unofficial Windows build of TigerVNC viewer, compiled from the
+            official `${{ needs.check.outputs.stable_tag }}` tag.
+            Source: https://github.com/TigerVNC/tigervnc/tree/${{ needs.check.outputs.stable_tag }}
+          files: vncviewer.exe
+
+  release-rc:
+    needs: [check, build-rc]
+    if: needs.check.outputs.rc_exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: vncviewer-rc
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check.outputs.rc_tag }}
+          name: TigerVNC viewer ${{ needs.check.outputs.rc_tag }} (rolling)
+          prerelease: true
+          body: |
+            Unofficial Windows build of TigerVNC viewer, compiled from the
+            current `master` branch. The suffix after `-rc.g` is the short
+            upstream commit hash. Not an official TigerVNC release.
+          files: vncviewer.exe
