@@ -133,6 +133,7 @@ jobs:
       - name: Apply compatibility patches (if still needed)
         if: matrix.channel == 'stable'
         run: |
+          pacman --sync --noconfirm --needed patch
           for p in _self/patches/*.patch; do
             [ -e "$p" ] || continue
             tmp=$(mktemp)
