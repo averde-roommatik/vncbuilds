@@ -89,6 +89,9 @@ jobs:
           echo "build_stable=$build_stable" >> "$GITHUB_OUTPUT"
           echo "build_rc=$build_rc" >> "$GITHUB_OUTPUT"
 
+          # Matrix = only the channels that actually need building.
+          # An empty [] here means the build job has nothing to do and
+          # simply won't spin up any Windows runner.
           channels="[]"
           if [ "$build_stable" = "true" ] && [ "$build_rc" = "true" ]; then
             channels='["stable","rc"]'
@@ -112,6 +115,9 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
+      - name: Disable Git autocrlf
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         with:
           repository: TigerVNC/tigervnc
@@ -129,12 +135,16 @@ jobs:
         run: |
           for p in _self/patches/*.patch; do
             [ -e "$p" ] || continue
-            if patch -p1 --dry-run < "$p" >/dev/null 2>&1; then
+            tmp=$(mktemp)
+            sed 's/\r$//' "$p" > "$tmp"
+            if patch -p1 --dry-run < "$tmp" > /tmp/patch-check.log 2>&1; then
               echo "Applying $p"
-              patch -p1 < "$p"
+              patch -p1 < "$tmp"
             else
-              echo "Skipping $p (does not apply — likely already fixed upstream)"
+              echo "::warning::$p did not apply cleanly — expected once upstream ships this fix, otherwise see reason below"
+              cat /tmp/patch-check.log
             fi
+            rm -f "$tmp"
           done
       - name: Install dependencies
         run: |
@@ -154,6 +164,9 @@ jobs:
       - name: Build
         working-directory: build
         run: make
+      - name: Smoke test
+        working-directory: build
+        run: timeout 15 ./vncviewer/vncviewer.exe --version
       - name: Package installer
         working-directory: build
         env:
@@ -161,8 +174,6 @@ jobs:
         run: |
           make installer
           cp release/tigervnc*.exe ../vncviewer.exe
-      - name: Smoke test
-        run: ./vncviewer.exe --version
       - name: Checksum
         run: sha256sum vncviewer.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v7
