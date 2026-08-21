@@ -37,6 +37,7 @@ jobs:
       rc_sha_full: ${{ steps.v.outputs.rc_sha_full }}
       build_stable: ${{ steps.v.outputs.build_stable }}
       build_rc: ${{ steps.v.outputs.build_rc }}
+      channels: ${{ steps.v.outputs.channels }}
     steps:
       - id: v
         env:
@@ -88,15 +89,23 @@ jobs:
           echo "build_stable=$build_stable" >> "$GITHUB_OUTPUT"
           echo "build_rc=$build_rc" >> "$GITHUB_OUTPUT"
 
+          channels="[]"
+          if [ "$build_stable" = "true" ] && [ "$build_rc" = "true" ]; then
+            channels='["stable","rc"]'
+          elif [ "$build_stable" = "true" ]; then
+            channels='["stable"]'
+          elif [ "$build_rc" = "true" ]; then
+            channels='["rc"]'
+          fi
+          echo "channels=$channels" >> "$GITHUB_OUTPUT"
+
   build:
     needs: check
+    if: needs.check.outputs.channels != '[]'
     strategy:
       fail-fast: false
       matrix:
-        channel: [stable, rc]
-    if: |
-      (matrix.channel == 'stable' && needs.check.outputs.build_stable == 'true') ||
-      (matrix.channel == 'rc' && needs.check.outputs.build_rc == 'true')
+        channel: ${{ fromJson(needs.check.outputs.channels) }}
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
