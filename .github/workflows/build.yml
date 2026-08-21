@@ -5,122 +5,128 @@ on:
     - cron: '0 */12 * * *'
   workflow_dispatch:
     inputs:
+      target:
+        description: 'What to build'
+        required: false
+        type: choice
+        options: [both, stable, rc]
+        default: both
       force:
         description: 'Rebuild and re-release even if the tag already exists'
         required: false
         type: boolean
         default: false
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
 env:
   UPSTREAM: https://github.com/TigerVNC/tigervnc.git
+  RC_KEEP: 10
 
 jobs:
   check:
     runs-on: ubuntu-latest
     outputs:
       stable_tag: ${{ steps.v.outputs.stable_tag }}
-      stable_exists: ${{ steps.v.outputs.stable_exists }}
       rc_tag: ${{ steps.v.outputs.rc_tag }}
-      rc_exists: ${{ steps.v.outputs.rc_exists }}
+      rc_sha_full: ${{ steps.v.outputs.rc_sha_full }}
+      build_stable: ${{ steps.v.outputs.build_stable }}
+      build_rc: ${{ steps.v.outputs.build_rc }}
     steps:
       - id: v
         env:
           GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target }}
           FORCE: ${{ inputs.force }}
         run: |
           set -e
+          TARGET="${TARGET:-both}"
 
           STABLE_TAG=$(git ls-remote --tags --sort=-v:refname "$UPSTREAM" \
             | awk -F/ '{print $NF}' | grep -v '\^{}' | head -1)
-          MASTER_SHA=$(git ls-remote "$UPSTREAM" refs/heads/master | cut -c1-7)
-          RC_TAG="${STABLE_TAG}-rc.g${MASTER_SHA}"
+          MASTER_SHA_FULL=$(git ls-remote "$UPSTREAM" refs/heads/master | cut -f1)
+          MASTER_SHA_SHORT=$(echo "$MASTER_SHA_FULL" | cut -c1-7)
+          RC_TAG="${STABLE_TAG}-rc.g${MASTER_SHA_SHORT}"
 
           echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
           echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
+          echo "rc_sha_full=$MASTER_SHA_FULL" >> "$GITHUB_OUTPUT"
 
-          if [ "$FORCE" = "true" ]; then
-            echo "stable_exists=false" >> "$GITHUB_OUTPUT"
-            echo "rc_exists=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          want_stable=false
+          want_rc=false
+          if [ "$TARGET" = "both" ] || [ "$TARGET" = "stable" ]; then want_stable=true; fi
+          if [ "$TARGET" = "both" ] || [ "$TARGET" = "rc" ]; then want_rc=true; fi
 
+          stable_exists=false
           if gh release view "$STABLE_TAG" -R "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "stable_exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "stable_exists=false" >> "$GITHUB_OUTPUT"
+            stable_exists=true
           fi
-
+          rc_exists=false
           if gh release view "$RC_TAG" -R "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "rc_exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "rc_exists=false" >> "$GITHUB_OUTPUT"
+            rc_exists=true
           fi
 
-  build-stable:
-    needs: check
-    if: needs.check.outputs.stable_exists == 'false'
-    runs-on: windows-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          repository: TigerVNC/tigervnc
-          ref: ${{ needs.check.outputs.stable_tag }}
-      - uses: msys2/setup-msys2@v2
-        with:
-          update: true
-      - name: Install dependencies
-        run: |
-          pacman --sync --noconfirm --needed \
-            make mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake
-          pacman --sync --noconfirm --needed \
-            mingw-w64-x86_64-fltk1.3 mingw-w64-x86_64-libjpeg-turbo \
-            mingw-w64-x86_64-gnutls mingw-w64-x86_64-pixman \
-            mingw-w64-x86_64-nettle mingw-w64-x86_64-gmp
-      - name: Configure
-        run: |
-          cmake -G "MSYS Makefiles" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DENABLE_NLS=ON -DENABLE_H264=ON -DENABLE_AUDIO=ON \
-            -DENABLE_GNUTLS=ON -DENABLE_NETTLE=ON -DBUILD_VIEWER=ON \
-            -S . -B build
-      - name: Build
-        working-directory: build
-        run: make
-      - name: Package installer
-        working-directory: build
-        env:
-          MSYS2_PATH_TYPE: inherit
-        run: |
-          make installer
-          cp release/tigervnc*.exe ../vncviewer.exe
-      - uses: actions/upload-artifact@v7
-        with:
-          name: vncviewer-stable
-          path: vncviewer.exe
+          build_stable=false
+          if [ "$want_stable" = "true" ]; then
+            if [ "$FORCE" = "true" ] || [ "$stable_exists" = "false" ]; then
+              build_stable=true
+            fi
+          fi
 
-  build-rc:
+          build_rc=false
+          if [ "$want_rc" = "true" ]; then
+            if [ "$FORCE" = "true" ] || [ "$rc_exists" = "false" ]; then
+              build_rc=true
+            fi
+          fi
+
+          echo "build_stable=$build_stable" >> "$GITHUB_OUTPUT"
+          echo "build_rc=$build_rc" >> "$GITHUB_OUTPUT"
+
+  build:
     needs: check
-    if: needs.check.outputs.rc_exists == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, rc]
+    if: |
+      (matrix.channel == 'stable' && needs.check.outputs.build_stable == 'true') ||
+      (matrix.channel == 'rc' && needs.check.outputs.build_rc == 'true')
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: TigerVNC/tigervnc
-          ref: master
+          ref: ${{ matrix.channel == 'stable' && needs.check.outputs.stable_tag || 'master' }}
+      - uses: actions/checkout@v7
+        if: matrix.channel == 'stable'
+        with:
+          path: _self
       - uses: msys2/setup-msys2@v2
         with:
           update: true
+          cache: false
+      - name: Apply compatibility patches (if still needed)
+        if: matrix.channel == 'stable'
+        run: |
+          for p in _self/patches/*.patch; do
+            [ -e "$p" ] || continue
+            if patch -p1 --dry-run < "$p" >/dev/null 2>&1; then
+              echo "Applying $p"
+              patch -p1 < "$p"
+            else
+              echo "Skipping $p (does not apply — likely already fixed upstream)"
+            fi
+          done
       - name: Install dependencies
         run: |
           pacman --sync --noconfirm --needed \
@@ -146,45 +152,76 @@ jobs:
         run: |
           make installer
           cp release/tigervnc*.exe ../vncviewer.exe
+      - name: Smoke test
+        run: ./vncviewer.exe --version
+      - name: Checksum
+        run: sha256sum vncviewer.exe > SHA256SUMS.txt
       - uses: actions/upload-artifact@v7
         with:
-          name: vncviewer-rc
-          path: vncviewer.exe
+          name: vncviewer-${{ matrix.channel }}
+          path: |
+            vncviewer.exe
+            SHA256SUMS.txt
 
   release-stable:
-    needs: [check, build-stable]
-    if: needs.check.outputs.stable_exists == 'false'
+    needs: [check, build]
+    if: needs.check.outputs.build_stable == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
         with:
           name: vncviewer-stable
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.check.outputs.stable_tag }}
-          name: TigerVNC viewer ${{ needs.check.outputs.stable_tag }} (stable)
+          name: vncviewer ${{ needs.check.outputs.stable_tag }} (stable)
           prerelease: false
           body: |
-            Unofficial Windows build of TigerVNC viewer, compiled from the
-            official `${{ needs.check.outputs.stable_tag }}` tag.
-            Source: https://github.com/TigerVNC/tigervnc/tree/${{ needs.check.outputs.stable_tag }}
-          files: vncviewer.exe
+            Windows build of TigerVNC's `vncviewer`, compiled from the official
+            [`${{ needs.check.outputs.stable_tag }}`](https://github.com/TigerVNC/tigervnc/tree/${{ needs.check.outputs.stable_tag }}) release tag.
+
+            Not built or endorsed by the TigerVNC project — see [`SHA256SUMS.txt`](../../releases/download/${{ needs.check.outputs.stable_tag }}/SHA256SUMS.txt) to verify the download.
+          files: |
+            vncviewer.exe
+            SHA256SUMS.txt
 
   release-rc:
-    needs: [check, build-rc]
-    if: needs.check.outputs.rc_exists == 'false'
+    needs: [check, build]
+    if: needs.check.outputs.build_rc == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
         with:
           name: vncviewer-rc
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.check.outputs.rc_tag }}
-          name: TigerVNC viewer ${{ needs.check.outputs.rc_tag }} (rolling)
+          name: vncviewer — master @ ${{ needs.check.outputs.rc_sha_full }}
           prerelease: true
           body: |
-            Unofficial Windows build of TigerVNC viewer, compiled from the
-            current `master` branch. The suffix after `-rc.g` is the short
-            upstream commit hash. Not an official TigerVNC release.
-          files: vncviewer.exe
+            Rolling Windows build of TigerVNC's `vncviewer`, compiled from
+            upstream [`master`](https://github.com/TigerVNC/tigervnc/commit/${{ needs.check.outputs.rc_sha_full }}) at this commit.
+
+            ⚠️ Development build, not an official TigerVNC release — see [`SHA256SUMS.txt`](../../releases/download/${{ needs.check.outputs.rc_tag }}/SHA256SUMS.txt) to verify the download.
+          files: |
+            vncviewer.exe
+            SHA256SUMS.txt
+
+  cleanup-rc:
+    needs: [check, release-rc]
+    if: needs.check.outputs.build_rc == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep only the last N rolling releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPO="${{ github.repository }}"
+          gh release list -R "$REPO" --limit 500 --json tagName,createdAt \
+            | jq -r --argjson keep "$RC_KEEP" \
+                '[.[] | select(.tagName | test("-rc\\.g"))]
+                 | sort_by(.createdAt) | reverse | .[$keep:] | .[].tagName' \
+            | while read -r tag; do
+                echo "Deleting old rolling release: $tag"
+                gh release delete "$tag" -R "$REPO" -y --cleanup-tag
+              done

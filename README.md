@@ -11,7 +11,7 @@ Two release channels are published, both as plain `.exe` assets:
 | Channel | Tag pattern | Built from | Stability |
 |---|---|---|---|
 | **Stable** | `vX.Y.Z` | The corresponding official TigerVNC tag | Matches an official TigerVNC release exactly |
-| **Rolling** | `vX.Y.Z-rc.g<sha>` | The current `master` branch (`<sha>` = short commit hash) | Latest upstream code, not an official release |
+| **Rolling** | `vX.Y.Z-rc.g<sha>` | The current `master` branch (`<sha>` = short commit hash) | Latest upstream code, not an official release. Only the **last 10** rolling releases are kept — older ones are pruned automatically. Stable releases are kept indefinitely. |
 
 Always-current direct links (no need to browse releases manually):
 
@@ -29,7 +29,11 @@ A scheduled GitHub Actions workflow (`.github/workflows/build.yml`) runs every 1
    - `cmake -DBUILD_VIEWER=ON -DENABLE_NLS=ON -DENABLE_H264=ON -DENABLE_AUDIO=ON -DENABLE_GNUTLS=ON -DENABLE_NETTLE=ON`
 4. Publishes the resulting `vncviewer` installer as a GitHub Release, tagged as described above.
 
-No source code is copied or vendored into this repository — every build compiles fresh from the upstream commit it's tagged against, so you can always verify exactly what went into a given release.
+No TigerVNC source code is copied or vendored into this repository — every build compiles fresh from the upstream commit it's tagged against, so you can always verify exactly what went into a given release.
+
+### Compatibility patches
+
+The `stable` channel builds older, frozen TigerVNC tags against whatever toolchain and library versions MSYS2 currently provides — which can drift out of sync over time (e.g. a newer `nettle` major version breaking an old tag's code that predates a compatibility fix already present upstream). When that happens, a small, targeted patch is kept in [`patches/`](patches) and applied automatically, but only if it's still needed — the build checks first, and silently skips any patch that no longer applies (typically because a newer stable tag already includes the equivalent fix upstream). This keeps `stable` buildable across time without vendoring any TigerVNC source.
 
 ## Verifying a build
 
