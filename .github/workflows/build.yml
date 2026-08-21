@@ -89,9 +89,6 @@ jobs:
           echo "build_stable=$build_stable" >> "$GITHUB_OUTPUT"
           echo "build_rc=$build_rc" >> "$GITHUB_OUTPUT"
 
-          # Matrix = only the channels that actually need building.
-          # An empty [] here means the build job has nothing to do and
-          # simply won't spin up any Windows runner.
           channels="[]"
           if [ "$build_stable" = "true" ] && [ "$build_rc" = "true" ]; then
             channels='["stable","rc"]'
@@ -133,7 +130,11 @@ jobs:
       - name: Apply compatibility patches (if still needed)
         if: matrix.channel == 'stable'
         run: |
-          pacman --sync --noconfirm --needed patch
+          for i in 1 2 3; do
+            pacman --sync --noconfirm --needed patch && break
+            echo "pacman failed (attempt $i/3), retrying in 15s..."
+            sleep 15
+          done
           for p in _self/patches/*.patch; do
             [ -e "$p" ] || continue
             tmp=$(mktemp)
@@ -149,10 +150,16 @@ jobs:
           done
       - name: Install dependencies
         run: |
-          pacman --sync --noconfirm --needed \
-            make mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake
-          pacman --sync --noconfirm --needed \
-            mingw-w64-x86_64-fltk1.3 mingw-w64-x86_64-libjpeg-turbo \
+          pkg_install() {
+            for i in 1 2 3; do
+              pacman --sync --noconfirm --needed "$@" && return 0
+              echo "pacman failed (attempt $i/3), retrying in 15s..."
+              sleep 15
+            done
+            return 1
+          }
+          pkg_install make mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake
+          pkg_install mingw-w64-x86_64-fltk1.3 mingw-w64-x86_64-libjpeg-turbo \
             mingw-w64-x86_64-gnutls mingw-w64-x86_64-pixman \
             mingw-w64-x86_64-nettle mingw-w64-x86_64-gmp
       - name: Configure
