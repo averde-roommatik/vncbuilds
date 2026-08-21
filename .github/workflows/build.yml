@@ -175,6 +175,30 @@ jobs:
       - name: Smoke test
         working-directory: build
         run: timeout 15 ./vncviewer/vncviewer.exe --version
+      - name: Package portable build
+        run: |
+          mkdir -p portable
+          cp build/vncviewer/vncviewer.exe portable/
+
+          if ldd build/vncviewer/vncviewer.exe | grep -qi "not found"; then
+            echo "::error::vncviewer.exe has unresolved DLL dependencies:"
+            ldd build/vncviewer/vncviewer.exe | grep -i "not found"
+            exit 1
+          fi
+
+          ldd build/vncviewer/vncviewer.exe \
+            | awk '{print $3}' \
+            | grep -iE '^/(mingw64|usr)/' \
+            | sort -u \
+            | while read -r dll; do
+                cp "$dll" portable/
+              done
+
+          echo "Portable package contents:"
+          ls -la portable/
+
+          pacman --sync --noconfirm --needed zip
+          (cd portable && zip -r ../vncviewer-portable.zip .)
       - name: Package installer
         working-directory: build
         env:
@@ -183,12 +207,13 @@ jobs:
           make installer
           cp release/tigervnc*.exe ../vncviewer.exe
       - name: Checksum
-        run: sha256sum vncviewer.exe > SHA256SUMS.txt
+        run: sha256sum vncviewer.exe vncviewer-portable.zip > SHA256SUMS.txt
       - uses: actions/upload-artifact@v7
         with:
           name: vncviewer-${{ matrix.channel }}
           path: |
             vncviewer.exe
+            vncviewer-portable.zip
             SHA256SUMS.txt
 
   release-stable:
@@ -208,9 +233,13 @@ jobs:
             Windows build of TigerVNC's `vncviewer`, compiled from the official
             [`${{ needs.check.outputs.stable_tag }}`](https://github.com/TigerVNC/tigervnc/tree/${{ needs.check.outputs.stable_tag }}) release tag.
 
+            - `vncviewer.exe` — installer
+            - `vncviewer-portable.zip` — no install needed, just extract and run
+
             Not built or endorsed by the TigerVNC project — see [`SHA256SUMS.txt`](../../releases/download/${{ needs.check.outputs.stable_tag }}/SHA256SUMS.txt) to verify the download.
           files: |
             vncviewer.exe
+            vncviewer-portable.zip
             SHA256SUMS.txt
 
   release-rc:
@@ -230,9 +259,13 @@ jobs:
             Rolling Windows build of TigerVNC's `vncviewer`, compiled from
             upstream [`master`](https://github.com/TigerVNC/tigervnc/commit/${{ needs.check.outputs.rc_sha_full }}) at this commit.
 
+            - `vncviewer.exe` — installer
+            - `vncviewer-portable.zip` — no install needed, just extract and run
+
             ⚠️ Development build, not an official TigerVNC release — see [`SHA256SUMS.txt`](../../releases/download/${{ needs.check.outputs.rc_tag }}/SHA256SUMS.txt) to verify the download.
           files: |
             vncviewer.exe
+            vncviewer-portable.zip
             SHA256SUMS.txt
 
   cleanup-rc:
