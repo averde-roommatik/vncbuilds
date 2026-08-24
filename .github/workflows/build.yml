@@ -120,7 +120,6 @@ jobs:
           repository: TigerVNC/tigervnc
           ref: ${{ matrix.channel == 'stable' && needs.check.outputs.stable_tag || 'master' }}
       - uses: actions/checkout@v7
-        if: matrix.channel == 'stable'
         with:
           path: _self
       - uses: msys2/setup-msys2@v2
@@ -128,7 +127,6 @@ jobs:
           update: true
           cache: false
       - name: Apply compatibility patches (if still needed)
-        if: matrix.channel == 'stable'
         run: |
           for i in 1 2 3; do
             pacman --sync --noconfirm --needed patch && break
