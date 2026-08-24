@@ -175,11 +175,8 @@ jobs:
       - name: Smoke test
         working-directory: build
         run: timeout 15 ./vncviewer/vncviewer.exe --version
-      - name: Package portable build
+      - name: Resolve runtime DLLs
         run: |
-          mkdir -p portable
-          cp build/vncviewer/vncviewer.exe portable/
-
           if ldd build/vncviewer/vncviewer.exe | grep -qi "not found"; then
             echo "::error::vncviewer.exe has unresolved DLL dependencies:"
             ldd build/vncviewer/vncviewer.exe | grep -i "not found"
@@ -189,10 +186,18 @@ jobs:
           ldd build/vncviewer/vncviewer.exe \
             | awk '{print $3}' \
             | grep -iE '^/(mingw64|usr)/' \
-            | sort -u \
-            | while read -r dll; do
-                cp "$dll" portable/
-              done
+            | sort -u > dll-list.txt
+
+          echo "Resolved runtime DLLs:"
+          cat dll-list.txt
+      - name: Package portable build
+        run: |
+          mkdir -p portable
+          cp build/vncviewer/vncviewer.exe portable/
+
+          while read -r dll; do
+            cp "$dll" portable/
+          done < dll-list.txt
 
           echo "Portable package contents:"
           ls -la portable/
@@ -204,6 +209,13 @@ jobs:
         env:
           MSYS2_PATH_TYPE: inherit
         run: |
+          while read -r dll; do
+            win_path=$(cygpath -w "$dll")
+            echo "Source: \"$win_path\"; DestDir: \"{app}\"; Flags: ignoreversion" >> extra_files.iss
+          done < ../dll-list.txt
+
+          sed -i "/restartreplace/r extra_files.iss" release/tigervnc.iss
+
           make installer
           cp release/tigervnc*.exe ../vncviewer.exe
       - name: Checksum
