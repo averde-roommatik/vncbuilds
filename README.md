@@ -10,24 +10,22 @@ upstream source via GitHub Actions and published here as public [Releases](../..
 
 ## Downloads
 
-Two products, each with two release channels, both published as plain `.exe`/`.zip`
-assets:
+Two products, both published as plain `.exe`/`.zip` assets:
 
 | Product | Channel | Tag pattern | Built from | Stability |
 |---|---|---|---|---|
 | **TigerVNC** (`tiger-vncviewer`) | Stable | `tiger-vX.Y.Z` | The corresponding official [TigerVNC](https://github.com/TigerVNC/tigervnc) tag | Matches an official TigerVNC release exactly |
 | **TigerVNC** (`tiger-vncviewer`) | Rolling | `tiger-vX.Y.Z-rc.g<sha>` | TigerVNC's current `master` branch (`<sha>` = short commit hash) | Latest upstream code, not an official release |
-| **UltraVNC** (`ultra-vncviewer`) | Stable | `ultra-vX.Y.Z.W` | [UltraVNC](https://github.com/ultravnc/UltraVNC)'s latest version-named branch | See "UltraVNC versioning" below — there's no upstream tag to match |
-| **UltraVNC** (`ultra-vncviewer`) | Rolling | `ultra-vX.Y.Z.W-rc.g<sha>` | UltraVNC's current `main` branch (`<sha>` = short commit hash) | Latest upstream code, not an official release |
+| **UltraVNC** (`ultra-vncviewer`) | — | `ultra-vX.Y.Z.W` | UltraVNC's current [`main`](https://github.com/ultravnc/UltraVNC) branch | See "UltraVNC versioning" below — there's no reliable stable/rolling split to make |
 
-Only the **last 10** rolling releases per product are kept — older ones are pruned
+Only the **last 10** TigerVNC rolling releases are kept — older ones are pruned
 automatically. Stable releases are kept indefinitely.
 
 Always-current direct links (no need to browse releases manually):
 
 - Latest TigerVNC **stable**: `https://github.com/averde-roommatik/vncbuilds/releases/latest/download/tiger-vncviewer.exe`
-- Latest UltraVNC **stable**: see the [Releases page](../../releases) for the most recent `ultra-v*` tag (both products publish separate releases, so there's no single shared "latest")
-- Rolling builds: see the [Releases page](../../releases) for the most recent `-rc.g<sha>` tag of each product
+- Latest UltraVNC build: see the [Releases page](../../releases) for the most recent `ultra-v*` tag
+- TigerVNC rolling builds: see the [Releases page](../../releases) for the most recent `tiger-v*-rc.g<sha>` tag
 
 Both viewer-only builds ship as an installer (`*.exe`) and a portable, no-install `*.zip`.
 **UltraVNC's build packages the viewer only** — no server, no repeater, no drivers,
@@ -91,16 +89,16 @@ Same compatibility-patch convention as TigerVNC applies here too, in
 
 #### UltraVNC versioning
 
-UltraVNC publishes no git tags and no GitHub Releases. Its version lives in
+UltraVNC publishes no git tags and no GitHub Releases, and there's no branch that
+reliably maps to an actual shipped version either: uvnc.com's real latest release is
+`1.8.2.4`, which is *older* than what `main` itself currently reports, and the only
+other branch in the repo (`1.9.0.0`) is an in-progress future-version candidate that
+was never released — not something safe to treat as "the stable version." `main` is
+the only ref this pipeline builds. Its version string comes from reading
 [`common/versionServerViewer.inc`](https://github.com/ultravnc/UltraVNC/blob/main/common/versionServerViewer.inc)
-(`APS_MAJORNUMBER`/`MINORNUMBER`/`BUILDNUMBER`/`MODIFICATIONNUMBER`), bumped by commit —
-and "stable" is whichever branch happens to be named after its own version number (only
-`main` and one such branch exist today). The `stable` build's version comes from reading
-that file at the resolved stable branch; the `rc` build's version comes from reading it at
-`main`'s own HEAD — the two aren't always in the order you'd expect (a rolling `main`
-build can report a *lower* version number than the last version-named branch, since the
-file is only bumped as part of cutting that branch), so each channel's tag reflects
-exactly what its own build reports, not an assumption based on the other.
+(`APS_MAJORNUMBER`/`MINORNUMBER`/`BUILDNUMBER`/`MODIFICATIONNUMBER`) at whatever commit
+was built, so the tag always reflects exactly what that build reports — it is not
+claimed to be an official UltraVNC release.
 
 ## Verifying a build
 
