@@ -438,6 +438,13 @@ jobs:
           path: _self
       - uses: ilammy/setup-nasm@v1
       - uses: microsoft/setup-msbuild@v2
+      - name: Install MFC/ATL (vncviewer is an MFC app, not in the default C++ workload)
+        shell: pwsh
+        run: |
+          $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          $vsPath = & "$vsInstaller\vswhere.exe" -latest -products * -property installationPath
+          & "$vsInstaller\vs_installer.exe" modify --installPath "$vsPath" `
+            --add Microsoft.VisualStudio.Component.VC.ATLMFC --quiet --norestart --wait
       - name: Enable vcpkg MSBuild integration
         shell: pwsh
         run: |
