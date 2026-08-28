@@ -443,8 +443,31 @@ jobs:
         run: |
           $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
           $vsPath = & "$vsInstaller\vswhere.exe" -latest -products * -property installationPath
-          & "$vsInstaller\vs_installer.exe" modify --installPath "$vsPath" `
-            --add Microsoft.VisualStudio.Component.VC.ATLMFC --quiet --norestart --wait
+          Write-Host "VS install path: $vsPath"
+
+          $proc = Start-Process -FilePath "$vsInstaller\vs_installer.exe" -ArgumentList @(
+            'modify', '--installPath', "$vsPath",
+            '--add', 'Microsoft.VisualStudio.Component.VC.ATLMFC',
+            '--quiet', '--norestart', '--wait'
+          ) -Wait -PassThru -NoNewWindow
+          Write-Host "vs_installer exit code: $($proc.ExitCode)"
+
+          $atlmfcLib = Join-Path $vsPath "VC\Tools\MSVC"
+          $found = Get-ChildItem $atlmfcLib -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName "atlmfc\lib\x64" } |
+            Where-Object { Test-Path $_ }
+          Write-Host "atlmfc\lib\x64 present: $([bool]$found)"
+
+          if (-not $found) {
+            Write-Host "::warning::MFC/ATL still missing after vs_installer modify — dumping its logs"
+            Get-ChildItem "$env:TEMP" -Filter "dd_*.log" -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 3 |
+              ForEach-Object {
+                Write-Host "---- $($_.FullName) ----"
+                Get-Content $_.FullName -Tail 150
+              }
+            throw "MFC/ATL component not present after vs_installer modify (exit code $($proc.ExitCode))"
+          }
       - name: Enable vcpkg MSBuild integration
         shell: pwsh
         run: |
