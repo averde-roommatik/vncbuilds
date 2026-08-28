@@ -438,36 +438,32 @@ jobs:
           path: _self
       - uses: ilammy/setup-nasm@v1
       - uses: microsoft/setup-msbuild@v2
-      - name: Install MFC/ATL (vncviewer is an MFC app, not in the default C++ workload)
+      - name: Resolve an MSVC toolset with MFC/ATL
+        id: toolset
         shell: pwsh
         run: |
+          # vncviewer.vcxproj pins an old PlatformToolset (v142) via its own project
+          # files. That specific side-by-side toolset doesn't ship MFC/ATL on this
+          # runner image, even though a newer installed toolset does — so retarget
+          # the whole solution to whichever installed toolset actually has it,
+          # rather than trying to install MFC for the old pinned one.
           $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
           $vsPath = & "$vsInstaller\vswhere.exe" -latest -products * -property installationPath
           Write-Host "VS install path: $vsPath"
 
-          $proc = Start-Process -FilePath "$vsInstaller\vs_installer.exe" -ArgumentList @(
-            'modify', '--installPath', "$vsPath",
-            '--add', 'Microsoft.VisualStudio.Component.VC.ATLMFC',
-            '--quiet', '--norestart', '--wait'
-          ) -Wait -PassThru -NoNewWindow
-          Write-Host "vs_installer exit code: $($proc.ExitCode)"
+          $toolsets = Get-ChildItem (Join-Path $vsPath "VC\Tools\MSVC") -Directory |
+            Sort-Object { [version]$_.Name } -Descending
+          Write-Host "Installed toolsets: $($toolsets.Name -join ', ')"
 
-          $atlmfcLib = Join-Path $vsPath "VC\Tools\MSVC"
-          $found = Get-ChildItem $atlmfcLib -Directory -ErrorAction SilentlyContinue |
-            ForEach-Object { Join-Path $_.FullName "atlmfc\lib\x64" } |
-            Where-Object { Test-Path $_ }
-          Write-Host "atlmfc\lib\x64 present: $([bool]$found)"
-
-          if (-not $found) {
-            Write-Host "::warning::MFC/ATL still missing after vs_installer modify — dumping its logs"
-            Get-ChildItem "$env:TEMP" -Filter "dd_*.log" -ErrorAction SilentlyContinue |
-              Sort-Object LastWriteTime -Descending | Select-Object -First 3 |
-              ForEach-Object {
-                Write-Host "---- $($_.FullName) ----"
-                Get-Content $_.FullName -Tail 150
-              }
-            throw "MFC/ATL component not present after vs_installer modify (exit code $($proc.ExitCode))"
+          $chosen = $toolsets | Where-Object { Test-Path (Join-Path $_.FullName "atlmfc\lib\x64") } | Select-Object -First 1
+          if (-not $chosen) {
+            throw "No installed MSVC toolset has atlmfc\lib\x64 (vncviewer is an MFC app)"
           }
+
+          $minor = $chosen.Name.Split('.')[1]
+          $platformToolset = "v14$($minor.Substring(0,1))"
+          Write-Host "Using toolset $($chosen.Name) -> PlatformToolset=$platformToolset"
+          "platform_toolset=$platformToolset" >> $env:GITHUB_OUTPUT
       - name: Enable vcpkg MSBuild integration
         shell: pwsh
         run: |
@@ -490,7 +486,9 @@ jobs:
           done
       - name: Build vncviewer
         shell: pwsh
-        run: msbuild vncviewer\vncviewer.sln /p:Configuration=Release /p:Platform=x64 /m
+        run: |
+          msbuild vncviewer\vncviewer.sln /p:Configuration=Release /p:Platform=x64 /m `
+            /p:PlatformToolset=${{ steps.toolset.outputs.platform_toolset }}
       - name: Locate build output
         id: out
         shell: pwsh
