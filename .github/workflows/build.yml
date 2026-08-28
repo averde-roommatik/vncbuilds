@@ -514,9 +514,10 @@ jobs:
       - name: Package installer
         shell: pwsh
         run: |
+          $iconPath = (Resolve-Path "icon\UltraVNC.ico").Path
           & iscc /DMyAppVersion="${{ matrix.channel == 'stable' && needs.check-ultravnc.outputs.stable_version || needs.check-ultravnc.outputs.rc_version }}" `
             /DSourceExe="${{ steps.out.outputs.exe_path }}" `
-            /DSourceIcon="icon\UltraVNC.ico" `
+            /DSourceIcon="$iconPath" `
             /O"." /F"ultra-vncviewer" `
             _self\installer\ultravnc-viewer.iss
       - name: Checksum
