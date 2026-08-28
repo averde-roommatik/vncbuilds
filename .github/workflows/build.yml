@@ -1,10 +1,16 @@
-name: Build & release TigerVNC viewer for Windows
+name: Build & release VNC viewers for Windows
 
 on:
   schedule:
     - cron: '0 */12 * * *'
   workflow_dispatch:
     inputs:
+      product:
+        description: 'Which product to build'
+        required: false
+        type: choice
+        options: [both, tigervnc, ultravnc]
+        default: both
       target:
         description: 'What to build'
         required: false
@@ -25,13 +31,18 @@ permissions:
   contents: write
 
 env:
-  UPSTREAM: https://github.com/TigerVNC/tigervnc.git
+  TIGER_UPSTREAM: https://github.com/TigerVNC/tigervnc.git
+  ULTRA_UPSTREAM: https://github.com/ultravnc/UltraVNC.git
   RC_KEEP: 10
 
 jobs:
-  check:
+  # ───────────────────────────── TigerVNC ─────────────────────────────
+
+  check-tigervnc:
+    if: github.event_name == 'schedule' || inputs.product == 'both' || inputs.product == 'tigervnc'
     runs-on: ubuntu-latest
     outputs:
+      stable_upstream_ref: ${{ steps.v.outputs.stable_upstream_ref }}
       stable_tag: ${{ steps.v.outputs.stable_tag }}
       rc_tag: ${{ steps.v.outputs.rc_tag }}
       rc_sha_full: ${{ steps.v.outputs.rc_sha_full }}
@@ -48,12 +59,15 @@ jobs:
           set -e
           TARGET="${TARGET:-both}"
 
-          STABLE_TAG=$(git ls-remote --tags --sort=-v:refname "$UPSTREAM" \
+          STABLE_UPSTREAM_REF=$(git ls-remote --tags --sort=-v:refname "$TIGER_UPSTREAM" \
             | awk -F/ '{print $NF}' | grep -v '\^{}' | head -1)
-          MASTER_SHA_FULL=$(git ls-remote "$UPSTREAM" refs/heads/master | cut -f1)
+          MASTER_SHA_FULL=$(git ls-remote "$TIGER_UPSTREAM" refs/heads/master | cut -f1)
           MASTER_SHA_SHORT=$(echo "$MASTER_SHA_FULL" | cut -c1-7)
-          RC_TAG="${STABLE_TAG}-rc.g${MASTER_SHA_SHORT}"
 
+          STABLE_TAG="tiger-${STABLE_UPSTREAM_REF}"
+          RC_TAG="tiger-${STABLE_UPSTREAM_REF}-rc.g${MASTER_SHA_SHORT}"
+
+          echo "stable_upstream_ref=$STABLE_UPSTREAM_REF" >> "$GITHUB_OUTPUT"
           echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
           echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
           echo "rc_sha_full=$MASTER_SHA_FULL" >> "$GITHUB_OUTPUT"
@@ -99,13 +113,13 @@ jobs:
           fi
           echo "channels=$channels" >> "$GITHUB_OUTPUT"
 
-  build:
-    needs: check
-    if: needs.check.outputs.channels != '[]'
+  build-tigervnc:
+    needs: check-tigervnc
+    if: needs.check-tigervnc.outputs.channels != '[]'
     strategy:
       fail-fast: false
       matrix:
-        channel: ${{ fromJson(needs.check.outputs.channels) }}
+        channel: ${{ fromJson(needs.check-tigervnc.outputs.channels) }}
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -118,7 +132,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: TigerVNC/tigervnc
-          ref: ${{ matrix.channel == 'stable' && needs.check.outputs.stable_tag || 'master' }}
+          ref: ${{ matrix.channel == 'stable' && needs.check-tigervnc.outputs.stable_upstream_ref || 'master' }}
       - uses: actions/checkout@v7
         with:
           path: _self
@@ -133,7 +147,7 @@ jobs:
             echo "pacman failed (attempt $i/3), retrying in 15s..."
             sleep 15
           done
-          for p in _self/patches/*.patch; do
+          for p in _self/patches-tigervnc/*.patch; do
             [ -e "$p" ] || continue
             tmp=$(mktemp)
             sed 's/\r$//' "$p" > "$tmp"
@@ -191,7 +205,7 @@ jobs:
       - name: Package portable build
         run: |
           mkdir -p portable
-          cp build/vncviewer/vncviewer.exe portable/
+          cp build/vncviewer/vncviewer.exe portable/tiger-vncviewer.exe
 
           while read -r dll; do
             cp "$dll" portable/
@@ -201,7 +215,7 @@ jobs:
           ls -la portable/
 
           pacman --sync --noconfirm --needed zip
-          (cd portable && zip -r ../vncviewer-portable.zip .)
+          (cd portable && zip -r ../tiger-vncviewer-portable.zip .)
       - name: Package installer
         working-directory: build
         env:
@@ -215,72 +229,72 @@ jobs:
           sed -i "/restartreplace/r extra_files.iss" release/tigervnc.iss
 
           make installer
-          cp release/tigervnc*.exe ../vncviewer.exe
+          cp release/tigervnc*.exe ../tiger-vncviewer.exe
       - name: Checksum
-        run: sha256sum vncviewer.exe vncviewer-portable.zip > SHA256SUMS.txt
+        run: sha256sum tiger-vncviewer.exe tiger-vncviewer-portable.zip > SHA256SUMS.txt
       - uses: actions/upload-artifact@v7
         with:
-          name: vncviewer-${{ matrix.channel }}
+          name: tiger-vncviewer-${{ matrix.channel }}
           path: |
-            vncviewer.exe
-            vncviewer-portable.zip
+            tiger-vncviewer.exe
+            tiger-vncviewer-portable.zip
             SHA256SUMS.txt
 
-  release-stable:
-    needs: [check, build]
-    if: needs.check.outputs.build_stable == 'true'
+  release-tigervnc-stable:
+    needs: [check-tigervnc, build-tigervnc]
+    if: needs.check-tigervnc.outputs.build_stable == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: vncviewer-stable
+          name: tiger-vncviewer-stable
       - uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.check.outputs.stable_tag }}
-          name: vncviewer ${{ needs.check.outputs.stable_tag }} (stable)
+          tag_name: ${{ needs.check-tigervnc.outputs.stable_tag }}
+          name: tiger-vncviewer ${{ needs.check-tigervnc.outputs.stable_upstream_ref }} (stable)
           prerelease: false
           body: |
             Windows build of TigerVNC's `vncviewer`, compiled from the official
-            [`${{ needs.check.outputs.stable_tag }}`](https://github.com/TigerVNC/tigervnc/tree/${{ needs.check.outputs.stable_tag }}) release tag.
+            [`${{ needs.check-tigervnc.outputs.stable_upstream_ref }}`](https://github.com/TigerVNC/tigervnc/tree/${{ needs.check-tigervnc.outputs.stable_upstream_ref }}) release tag.
 
-            - `vncviewer.exe` — installer
-            - `vncviewer-portable.zip` — no install needed, just extract and run
+            - `tiger-vncviewer.exe` — installer
+            - `tiger-vncviewer-portable.zip` — no install needed, just extract and run
 
-            Not built or endorsed by the TigerVNC project — see [`SHA256SUMS.txt`](../../releases/download/${{ needs.check.outputs.stable_tag }}/SHA256SUMS.txt) to verify the download.
+            Not built or endorsed by the TigerVNC project — see [`SHA256SUMS.txt`](../../releases/download/${{ needs.check-tigervnc.outputs.stable_tag }}/SHA256SUMS.txt) to verify the download.
           files: |
-            vncviewer.exe
-            vncviewer-portable.zip
+            tiger-vncviewer.exe
+            tiger-vncviewer-portable.zip
             SHA256SUMS.txt
 
-  release-rc:
-    needs: [check, build]
-    if: needs.check.outputs.build_rc == 'true'
+  release-tigervnc-rc:
+    needs: [check-tigervnc, build-tigervnc]
+    if: needs.check-tigervnc.outputs.build_rc == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: vncviewer-rc
+          name: tiger-vncviewer-rc
       - uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.check.outputs.rc_tag }}
-          name: vncviewer — master @ ${{ needs.check.outputs.rc_sha_full }}
+          tag_name: ${{ needs.check-tigervnc.outputs.rc_tag }}
+          name: tiger-vncviewer — master @ ${{ needs.check-tigervnc.outputs.rc_sha_full }}
           prerelease: true
           body: |
             Rolling Windows build of TigerVNC's `vncviewer`, compiled from
-            upstream [`master`](https://github.com/TigerVNC/tigervnc/commit/${{ needs.check.outputs.rc_sha_full }}) at this commit.
+            upstream [`master`](https://github.com/TigerVNC/tigervnc/commit/${{ needs.check-tigervnc.outputs.rc_sha_full }}) at this commit.
 
-            - `vncviewer.exe` — installer
-            - `vncviewer-portable.zip` — no install needed, just extract and run
+            - `tiger-vncviewer.exe` — installer
+            - `tiger-vncviewer-portable.zip` — no install needed, just extract and run
 
-            ⚠️ Development build, not an official TigerVNC release — see [`SHA256SUMS.txt`](../../releases/download/${{ needs.check.outputs.rc_tag }}/SHA256SUMS.txt) to verify the download.
+            ⚠️ Development build, not an official TigerVNC release — see [`SHA256SUMS.txt`](../../releases/download/${{ needs.check-tigervnc.outputs.rc_tag }}/SHA256SUMS.txt) to verify the download.
           files: |
-            vncviewer.exe
-            vncviewer-portable.zip
+            tiger-vncviewer.exe
+            tiger-vncviewer-portable.zip
             SHA256SUMS.txt
 
-  cleanup-rc:
-    needs: [check, release-rc]
-    if: needs.check.outputs.build_rc == 'true'
+  cleanup-tigervnc-rc:
+    needs: [check-tigervnc, release-tigervnc-rc]
+    if: needs.check-tigervnc.outputs.build_rc == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Keep only the last N rolling releases
@@ -290,7 +304,276 @@ jobs:
           REPO="${{ github.repository }}"
           gh release list -R "$REPO" --limit 500 --json tagName,createdAt \
             | jq -r --argjson keep "$RC_KEEP" \
-                '[.[] | select(.tagName | test("-rc\\.g"))]
+                '[.[] | select(.tagName | test("^tiger-.*-rc\\.g"))]
+                 | sort_by(.createdAt) | reverse | .[$keep:] | .[].tagName' \
+            | while read -r tag; do
+                echo "Deleting old rolling release: $tag"
+                gh release delete "$tag" -R "$REPO" -y --cleanup-tag
+              done
+
+  # ───────────────────────────── UltraVNC ─────────────────────────────
+
+  check-ultravnc:
+    if: github.event_name == 'schedule' || inputs.product == 'both' || inputs.product == 'ultravnc'
+    runs-on: ubuntu-latest
+    outputs:
+      stable_branch: ${{ steps.v.outputs.stable_branch }}
+      stable_version: ${{ steps.v.outputs.stable_version }}
+      stable_tag: ${{ steps.v.outputs.stable_tag }}
+      rc_tag: ${{ steps.v.outputs.rc_tag }}
+      rc_sha_full: ${{ steps.v.outputs.rc_sha_full }}
+      rc_version: ${{ steps.v.outputs.rc_version }}
+      build_stable: ${{ steps.v.outputs.build_stable }}
+      build_rc: ${{ steps.v.outputs.build_rc }}
+      channels: ${{ steps.v.outputs.channels }}
+    steps:
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -e
+          TARGET="${TARGET:-both}"
+
+          # UltraVNC has no tags/releases upstream. Version lives in
+          # common/versionServerViewer.inc (bumped per commit), and "stable" is
+          # whichever branch is named after its own version number.
+          get_version() {
+            local ref="$1"
+            local inc
+            inc=$(curl -sf "https://raw.githubusercontent.com/ultravnc/UltraVNC/${ref}/common/versionServerViewer.inc")
+            local maj min bld mod
+            maj=$(echo "$inc" | grep -oP 'APS_MAJORNUMBER\s+\K[0-9]+')
+            min=$(echo "$inc" | grep -oP 'APS_MINORNUMBER\s+\K[0-9]+')
+            bld=$(echo "$inc" | grep -oP 'APS_BUILDNUMBER\s+\K[0-9]+')
+            mod=$(echo "$inc" | grep -oP 'APS_MODIFICATIONNUMBER\s+\K[0-9]+')
+            echo "${maj}.${min}.${bld}.${mod}"
+          }
+
+          STABLE_BRANCH=$(git ls-remote --heads "$ULTRA_UPSTREAM" \
+            | awk -F/ '{print $NF}' \
+            | grep -E '^[0-9]+(\.[0-9]+){2,3}$' \
+            | sort -V | tail -1)
+          if [ -z "$STABLE_BRANCH" ]; then
+            echo "::error::No version-shaped branch found on $ULTRA_UPSTREAM"
+            exit 1
+          fi
+          STABLE_VERSION=$(get_version "$STABLE_BRANCH")
+
+          RC_SHA_FULL=$(git ls-remote "$ULTRA_UPSTREAM" refs/heads/main | cut -f1)
+          RC_SHA_SHORT=$(echo "$RC_SHA_FULL" | cut -c1-7)
+          RC_VERSION=$(get_version "$RC_SHA_FULL")
+
+          STABLE_TAG="ultra-v${STABLE_VERSION}"
+          RC_TAG="ultra-v${RC_VERSION}-rc.g${RC_SHA_SHORT}"
+
+          echo "stable_branch=$STABLE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "stable_version=$STABLE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
+          echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
+          echo "rc_sha_full=$RC_SHA_FULL" >> "$GITHUB_OUTPUT"
+          echo "rc_version=$RC_VERSION" >> "$GITHUB_OUTPUT"
+
+          want_stable=false
+          want_rc=false
+          if [ "$TARGET" = "both" ] || [ "$TARGET" = "stable" ]; then want_stable=true; fi
+          if [ "$TARGET" = "both" ] || [ "$TARGET" = "rc" ]; then want_rc=true; fi
+
+          stable_exists=false
+          if gh release view "$STABLE_TAG" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            stable_exists=true
+          fi
+          rc_exists=false
+          if gh release view "$RC_TAG" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            rc_exists=true
+          fi
+
+          build_stable=false
+          if [ "$want_stable" = "true" ]; then
+            if [ "$FORCE" = "true" ] || [ "$stable_exists" = "false" ]; then
+              build_stable=true
+            fi
+          fi
+
+          build_rc=false
+          if [ "$want_rc" = "true" ]; then
+            if [ "$FORCE" = "true" ] || [ "$rc_exists" = "false" ]; then
+              build_rc=true
+            fi
+          fi
+
+          echo "build_stable=$build_stable" >> "$GITHUB_OUTPUT"
+          echo "build_rc=$build_rc" >> "$GITHUB_OUTPUT"
+
+          channels="[]"
+          if [ "$build_stable" = "true" ] && [ "$build_rc" = "true" ]; then
+            channels='["stable","rc"]'
+          elif [ "$build_stable" = "true" ]; then
+            channels='["stable"]'
+          elif [ "$build_rc" = "true" ]; then
+            channels='["rc"]'
+          fi
+          echo "channels=$channels" >> "$GITHUB_OUTPUT"
+
+  build-ultravnc:
+    needs: check-ultravnc
+    if: needs.check-ultravnc.outputs.channels != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: ${{ fromJson(needs.check-ultravnc.outputs.channels) }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Disable Git autocrlf
+        shell: bash
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+        with:
+          repository: ultravnc/UltraVNC
+          ref: ${{ matrix.channel == 'stable' && needs.check-ultravnc.outputs.stable_branch || 'main' }}
+      - uses: actions/checkout@v7
+        with:
+          path: _self
+      - uses: ilammy/setup-nasm@v1
+      - uses: microsoft/setup-msbuild@v2
+      - name: Apply compatibility patches (if still needed)
+        shell: bash
+        run: |
+          for p in _self/patches-ultravnc/*.patch; do
+            [ -e "$p" ] || continue
+            tmp=$(mktemp)
+            sed 's/\r$//' "$p" > "$tmp"
+            if patch -p1 --dry-run < "$tmp" > /tmp/patch-check.log 2>&1; then
+              echo "Applying $p"
+              patch -p1 < "$tmp"
+            else
+              echo "::warning::$p did not apply cleanly — expected once upstream ships this fix, otherwise see reason below"
+              cat /tmp/patch-check.log
+            fi
+            rm -f "$tmp"
+          done
+      - name: Build vncviewer
+        shell: pwsh
+        run: msbuild vncviewer\vncviewer.sln /p:Configuration=Release /p:Platform=x64 /m
+      - name: Locate build output
+        id: out
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse -Path vncviewer -Filter vncviewer.exe |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $exe) { throw "vncviewer.exe not found after build" }
+          Write-Host "Found: $($exe.FullName)"
+          "exe_path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "${{ steps.out.outputs.exe_path }}" -PassThru
+          Start-Sleep -Seconds 3
+          if ($p.HasExited) { throw "vncviewer.exe exited immediately (exit code $($p.ExitCode))" }
+          Stop-Process -Id $p.Id -Force
+      - name: Package portable build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path portable -Force | Out-Null
+          Copy-Item "${{ steps.out.outputs.exe_path }}" "portable\ultra-vncviewer.exe"
+          Compress-Archive -Path portable\* -DestinationPath ultra-vncviewer-portable.zip
+      - name: Package installer
+        shell: pwsh
+        run: |
+          & iscc /DMyAppVersion="${{ matrix.channel == 'stable' && needs.check-ultravnc.outputs.stable_version || needs.check-ultravnc.outputs.rc_version }}" `
+            /DSourceExe="${{ steps.out.outputs.exe_path }}" `
+            /DSourceIcon="icon\UltraVNC.ico" `
+            /O"." /F"ultra-vncviewer" `
+            _self\installer\ultravnc-viewer.iss
+      - name: Checksum
+        shell: pwsh
+        run: |
+          Get-FileHash ultra-vncviewer.exe, ultra-vncviewer-portable.zip -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content -Encoding ascii SHA256SUMS.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ultra-vncviewer-${{ matrix.channel }}
+          path: |
+            ultra-vncviewer.exe
+            ultra-vncviewer-portable.zip
+            SHA256SUMS.txt
+
+  release-ultravnc-stable:
+    needs: [check-ultravnc, build-ultravnc]
+    if: needs.check-ultravnc.outputs.build_stable == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ultra-vncviewer-stable
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.check-ultravnc.outputs.stable_tag }}
+          name: ultra-vncviewer ${{ needs.check-ultravnc.outputs.stable_version }} (stable)
+          prerelease: false
+          body: |
+            Windows build of UltraVNC's `vncviewer`, compiled from the
+            [`${{ needs.check-ultravnc.outputs.stable_branch }}`](https://github.com/ultravnc/UltraVNC/tree/${{ needs.check-ultravnc.outputs.stable_branch }}) branch.
+
+            UltraVNC publishes no upstream tags/releases — `${{ needs.check-ultravnc.outputs.stable_branch }}`
+            is the branch whose own version file reports `${{ needs.check-ultravnc.outputs.stable_version }}`.
+
+            Viewer only — this does **not** include the UltraVNC server, repeater, or drivers.
+
+            - `ultra-vncviewer.exe` — installer
+            - `ultra-vncviewer-portable.zip` — no install needed, just extract and run
+
+            Not built or endorsed by the UltraVNC project — see [`SHA256SUMS.txt`](../../releases/download/${{ needs.check-ultravnc.outputs.stable_tag }}/SHA256SUMS.txt) to verify the download.
+          files: |
+            ultra-vncviewer.exe
+            ultra-vncviewer-portable.zip
+            SHA256SUMS.txt
+
+  release-ultravnc-rc:
+    needs: [check-ultravnc, build-ultravnc]
+    if: needs.check-ultravnc.outputs.build_rc == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ultra-vncviewer-rc
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.check-ultravnc.outputs.rc_tag }}
+          name: ultra-vncviewer — main @ ${{ needs.check-ultravnc.outputs.rc_sha_full }}
+          prerelease: true
+          body: |
+            Rolling Windows build of UltraVNC's `vncviewer`, compiled from
+            upstream [`main`](https://github.com/ultravnc/UltraVNC/commit/${{ needs.check-ultravnc.outputs.rc_sha_full }}) at this commit
+            (reports itself as version `${{ needs.check-ultravnc.outputs.rc_version }}`).
+
+            Viewer only — this does **not** include the UltraVNC server, repeater, or drivers.
+
+            - `ultra-vncviewer.exe` — installer
+            - `ultra-vncviewer-portable.zip` — no install needed, just extract and run
+
+            ⚠️ Development build, not an official UltraVNC release — see [`SHA256SUMS.txt`](../../releases/download/${{ needs.check-ultravnc.outputs.rc_tag }}/SHA256SUMS.txt) to verify the download.
+          files: |
+            ultra-vncviewer.exe
+            ultra-vncviewer-portable.zip
+            SHA256SUMS.txt
+
+  cleanup-ultravnc-rc:
+    needs: [check-ultravnc, release-ultravnc-rc]
+    if: needs.check-ultravnc.outputs.build_rc == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep only the last N rolling releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPO="${{ github.repository }}"
+          gh release list -R "$REPO" --limit 500 --json tagName,createdAt \
+            | jq -r --argjson keep "$RC_KEEP" \
+                '[.[] | select(.tagName | test("^ultra-.*-rc\\.g"))]
                  | sort_by(.createdAt) | reverse | .[$keep:] | .[].tagName' \
             | while read -r tag; do
                 echo "Deleting old rolling release: $tag"
