@@ -514,7 +514,7 @@ jobs:
       - name: Package installer
         shell: pwsh
         run: |
-          $iconPath = (Resolve-Path "icon\UltraVNC.ico").Path
+          $iconPath = (Resolve-Path "vncviewer\res\idr_tray.ico").Path
           & iscc /DMyAppVersion="${{ matrix.channel == 'stable' && needs.check-ultravnc.outputs.stable_version || needs.check-ultravnc.outputs.rc_version }}" `
             /DSourceExe="${{ steps.out.outputs.exe_path }}" `
             /DSourceIcon="$iconPath" `
