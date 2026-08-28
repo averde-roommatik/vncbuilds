@@ -438,6 +438,10 @@ jobs:
           path: _self
       - uses: ilammy/setup-nasm@v1
       - uses: microsoft/setup-msbuild@v2
+      - name: Enable vcpkg MSBuild integration
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
       - name: Apply compatibility patches (if still needed)
         shell: bash
         run: |
