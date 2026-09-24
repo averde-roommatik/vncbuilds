@@ -554,13 +554,18 @@ jobs:
       always() &&
       (needs.check-tigervnc.result == 'success' || needs.check-tigervnc.result == 'skipped') &&
       (needs.check-ultravnc.result == 'success' || needs.check-ultravnc.result == 'skipped') &&
-      (needs.check-tigervnc.outputs.build_stable == 'true' || needs.check-ultravnc.outputs.build_stable == 'true')
+      ((needs.check-tigervnc.outputs.build_stable == 'true' && needs.build-tigervnc.result == 'success') ||
+       (needs.check-ultravnc.outputs.build_stable == 'true' && needs.build-ultravnc.result == 'success'))
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      # build_stable alone isn't enough: the check jobs always run, so a product
+      # scoped out by the `product` input (or whose build failed) has no artifact.
+      TIGER_BUILT: ${{ needs.check-tigervnc.outputs.build_stable == 'true' && needs.build-tigervnc.result == 'success' }}
+      ULTRA_BUILT: ${{ needs.check-ultravnc.outputs.build_stable == 'true' && needs.build-ultravnc.result == 'success' }}
     steps:
       - name: Reuse TigerVNC's last stable release (only if not rebuilt this run)
-        if: needs.check-tigervnc.outputs.build_stable != 'true'
+        if: env.TIGER_BUILT != 'true'
         run: |
           mkdir -p tiger-assets
           TAG="${{ needs.check-tigervnc.outputs.stable_tag }}"
@@ -570,12 +575,12 @@ jobs:
             echo "::warning::No existing TigerVNC stable release ($TAG) to reuse — it will be missing from the combined release"
           fi
       - uses: actions/download-artifact@v8
-        if: needs.check-tigervnc.outputs.build_stable == 'true'
+        if: env.TIGER_BUILT == 'true'
         with:
           name: tiger-vncviewer-stable
           path: tiger-assets
       - name: Reuse UltraVNC's last stable release (only if not rebuilt this run)
-        if: needs.check-ultravnc.outputs.build_stable != 'true'
+        if: env.ULTRA_BUILT != 'true'
         run: |
           mkdir -p ultra-assets
           TAG="${{ needs.check-ultravnc.outputs.stable_tag }}"
@@ -585,7 +590,7 @@ jobs:
             echo "::warning::No existing UltraVNC stable release ($TAG) to reuse — it will be missing from the combined release"
           fi
       - uses: actions/download-artifact@v8
-        if: needs.check-ultravnc.outputs.build_stable == 'true'
+        if: env.ULTRA_BUILT == 'true'
         with:
           name: ultra-vncviewer-stable
           path: ultra-assets
