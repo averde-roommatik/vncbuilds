@@ -52,8 +52,8 @@ verify exactly what went into a given release.
 ### TigerVNC build
 
 Built with the same MSYS2 + mingw-w64 toolchain and dependency set TigerVNC uses in its
-own CI, with `CMAKE_BUILD_TYPE=Release`:
-- `mingw-w64-x86_64-toolchain`, `-cmake`, `-fltk1.3`, `-libjpeg-turbo`, `-gnutls`,
+own CI, under the UCRT64 environment, with `CMAKE_BUILD_TYPE=Release`:
+- `mingw-w64-ucrt-x86_64-toolchain`, `-cmake`, `-fltk1.3`, `-libjpeg-turbo`, `-gnutls`,
   `-pixman`, `-nettle`, `-gmp`
 - `cmake -DBUILD_VIEWER=ON -DENABLE_NLS=ON -DENABLE_H264=ON -DENABLE_AUDIO=ON -DENABLE_GNUTLS=ON -DENABLE_NETTLE=ON`
 

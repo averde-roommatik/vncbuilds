@@ -141,6 +141,7 @@ jobs:
           path: _self
       - uses: msys2/setup-msys2@v2
         with:
+          msystem: UCRT64
           update: true
           cache: false
       - name: Apply compatibility patches (if still needed)
@@ -173,10 +174,10 @@ jobs:
             done
             return 1
           }
-          pkg_install make mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake
-          pkg_install mingw-w64-x86_64-fltk1.3 mingw-w64-x86_64-libjpeg-turbo \
-            mingw-w64-x86_64-gnutls mingw-w64-x86_64-pixman \
-            mingw-w64-x86_64-nettle mingw-w64-x86_64-gmp
+          pkg_install make mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-cmake
+          pkg_install mingw-w64-ucrt-x86_64-fltk1.3 mingw-w64-ucrt-x86_64-libjpeg-turbo \
+            mingw-w64-ucrt-x86_64-gnutls mingw-w64-ucrt-x86_64-pixman \
+            mingw-w64-ucrt-x86_64-nettle mingw-w64-ucrt-x86_64-gmp
       - name: Configure
         run: |
           cmake -G "MSYS Makefiles" \
@@ -200,7 +201,7 @@ jobs:
 
           ldd build/vncviewer/vncviewer.exe \
             | awk '{print $3}' \
-            | grep -iE '^/(mingw64|usr)/' \
+            | grep -iE '^/(ucrt64|usr)/' \
             | sort -u > dll-list.txt
 
           echo "Resolved runtime DLLs:"
