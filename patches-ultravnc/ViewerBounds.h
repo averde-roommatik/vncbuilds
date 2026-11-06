@@ -22,6 +22,21 @@ namespace ViewerBounds
 		return w <= limit / bytesPerPixel / h;
 	}
 
+	// True if a framebuffer of w*h pixels is sane. Upstream notes that a screen larger than
+	// 20000 on either axis isn't possible with the current OS, so that's the cap.
+	inline bool framebuffer(int64_t w, int64_t h, int64_t bytesPerPixel)
+	{
+		return w > 0 && h > 0 && w <= 20000 && h <= 20000 && bytesPerPixel > 0 && bytesPerPixel <= 4;
+	}
+
+	// True if the rectangle lies fully inside a framebufferWidth x framebufferHeight screen.
+	inline bool rectangle(int64_t x, int64_t y, int64_t w, int64_t h, int64_t framebufferWidth, int64_t framebufferHeight)
+	{
+		return x >= 0 && y >= 0 && w >= 0 && h >= 0 && framebufferWidth >= 0 && framebufferHeight >= 0 &&
+			x <= framebufferWidth && w <= framebufferWidth - x &&
+			y <= framebufferHeight && h <= framebufferHeight - y;
+	}
+
 	// True if a length announced by the peer is within the accepted size.
 	inline bool payload(int64_t len)
 	{
