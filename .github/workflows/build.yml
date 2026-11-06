@@ -458,6 +458,16 @@ jobs:
             fi
             rm -f "$tmp"
           done
+      - name: Provide ViewerBounds.h if upstream still doesn't ship it
+        shell: bash
+        run: |
+          # Upstream 6c44cfc includes vncviewer/ViewerBounds.h but never committed it.
+          if [ -e vncviewer/ViewerBounds.h ]; then
+            echo "Upstream ships ViewerBounds.h — using it (this step can be deleted)"
+          else
+            echo "::warning::Upstream is missing vncviewer/ViewerBounds.h — using the stand-in from patches-ultravnc/"
+            cp _self/patches-ultravnc/ViewerBounds.h vncviewer/ViewerBounds.h
+          fi
       - name: Build vncviewer
         shell: pwsh
         run: |
