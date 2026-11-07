@@ -7,4 +7,9 @@ build applies every patch here with a dry-run check first and silently skips any
 longer apply, so this directory can be added to over time without breaking builds once
 upstream or vcpkg catches up.
 
-Empty for now — added reactively as real CI failures surface.
+`ViewerBounds.h` and `ViewerJpegSource.h` are not patches: upstream commit `6c44cfc`
+includes them but never committed them, so the workflow copies these reconstructions into
+`vncviewer/` when upstream still lacks them. Delete each (and the workflow step) once
+upstream ships the real one.
+
+Otherwise added reactively as real CI failures surface.

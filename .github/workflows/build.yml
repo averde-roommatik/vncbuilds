@@ -458,6 +458,18 @@ jobs:
             fi
             rm -f "$tmp"
           done
+      - name: Provide headers upstream forgot to commit
+        shell: bash
+        run: |
+          # Upstream 6c44cfc includes these two from vncviewer/ but never committed them.
+          for h in ViewerBounds.h ViewerJpegSource.h; do
+            if [ -e "vncviewer/$h" ]; then
+              echo "Upstream ships $h — using it"
+            else
+              echo "::warning::Upstream is missing vncviewer/$h — using the stand-in from patches-ultravnc/"
+              cp "_self/patches-ultravnc/$h" "vncviewer/$h"
+            fi
+          done
       - name: Build vncviewer
         shell: pwsh
         run: |
